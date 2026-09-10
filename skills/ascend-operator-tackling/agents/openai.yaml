@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ascend Operator Tackling"
+  short_description: "Goal-driven Ascend operator development and tuning"
+  default_prompt: "Use $ascend-operator-tackling to drive a long-horizon Ascend operator mission with evidence-first checkpoints, official tooling, and autonomous correction."
