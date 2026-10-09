@@ -1,57 +1,11 @@
-# ascend-operator-tackling
+# ascend-operator-tackling — 已合并归档
 
-Goal-driven, evidence-first workflow for long-horizon Ascend/CANN operator development and tuning.
+本仓库的 skill 已于 2026-10-10 合并进 **[KuaaMU/agent-plugins](https://github.com/KuaaMU/agent-plugins)**
+的 `skills/long-horizon-skills`（防失效规程 + 执行循环统一体，v2）。
+Ascend/CANN 专属内容保留为 `references/profiles/ascend-cann.md`。
 
-The skill is designed for:
-
-- environment-aware use of official CANN/Ascend tooling;
-- correctness gates before performance promotion;
-- falsifiable, single-variable optimization candidates;
-- critical-path attribution and resource-driven generalization;
-- compact-safe mission state, handoffs, and multi-agent isolation;
-- autonomous correction when experiments fail or previous assumptions become stale.
-
-It does not bind to a specific CANN release, chip model, repository, or operator workload.
-
-## Layout
-
-```text
-skills/ascend-operator-tackling/
-├── SKILL.md
-├── agents/
-├── assets/
-├── references/
-└── scripts/
-```
-
-## Install
+本仓不再更新，请使用：
 
 ```bash
-python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-github.py \
-  --repo KuaaMU/ascend-operator-tackling \
-  --path skills/ascend-operator-tackling
+npx skills add KuaaMU/agent-plugins --skill long-horizon-skills
 ```
-
-## Initialize a mission
-
-```bash
-python skills/ascend-operator-tackling/scripts/init_mission.py \
-  --mission ./mission \
-  --goal "Meet the operator's correctness and performance targets" \
-  --acceptance "All target-environment acceptance tests pass" \
-  --operator "<operator>" \
-  --repo "<repo>" \
-  --task-doc "<task-doc>"
-```
-
-Then run:
-
-```bash
-python skills/ascend-operator-tackling/scripts/discover_environment.py
-python skills/ascend-operator-tackling/scripts/mission_lint.py ./mission
-```
-
-## License
-
-MIT
-
