@@ -10,5 +10,9 @@
 | LESSONS.md | lessons | orchestrator/reviewer | active | {{DATE}} | mission | Hard gates |
 | HANDOFF.md | recovery | current owner | active | {{DATE}} | mission | Resume path |
 | CANDIDATES.md | candidates | drivers | active | {{DATE}} | mission | Candidate ledger |
+| HARDSET.md | hard-set | orchestrator | active | {{DATE}} | mission | Hard cases ledger |
 | METRICS.md | metrics | orchestrator | active | {{DATE}} | mission | Optimization-efficiency scoreboard |
+| scratch/ | scratch | candidate owners | active | — | per-candidate | Experiment outputs, deleted on close |
+| research/ | research | orchestrator | active | — | mission | External notes, quota-limited |
+| hard-set/ | evidence | orchestrator | active | — | mission | Hard-case artifacts |
 

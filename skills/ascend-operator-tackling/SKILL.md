@@ -1,216 +1,126 @@
 ---
 name: ascend-operator-tackling
 description: >-
-  以目标驱动、证据优先的方式推进 Ascend/CANN 算子从实现、正确性闭环到性能攻坚：
-  不绑定特定 CANN 版本、芯片或算子，优先发现并使用当前环境提供的官方工具做瓶颈归因，
-  再以单变量候选实验、真实硬件门禁和可回退证据推进；用 STATE/TRUTH/PLAN/REVIEW/HANDOFF、
-  候选台账和多 agent 隔离抵御长上下文、compact、换 agent 与需求漂移；通过持续定位关键路径、
-  归纳失败家族和主动重规划，尽量实现无人干预下的自主纠正与长程交付。
+  有明确验收标准的长周期工程攻坚：目标驱动、证据优先的自主循环。
+  状态外置、分层评测、单变量可证伪候选、kill 止损、独立评审、多候选赛马。
+  内核领域无关、模型/harness 无关；Ascend/CANN 等领域细节由 profiles/ 按需加载。
 ---
 
-# Ascend Operator Tackling
+# Ascend Operator Tackling v2
 
-## 使用目标
+## 这是什么
 
-当任务需要在任意 Ascend/CANN 环境中长期开发、迁移或调优算子，并且必须靠真实硬件证据决定
-“继续、回退、重构或止损”时使用本 skill。它适用于单 agent 和 Orchestrator + 多 agent 模式，
-也适用于上下文已 compact、旧 agent 已离开、需要从半成品继续推进的情况。
+为**"有明确验收标准、需要长期迭代的工程攻坚"**设计的自主工作法：算子调优、
+性能攻坚、复杂迁移、疑难 bug 狩猎。内核领域无关；它不教你写 Ascend 算子，
+它教你**如何在任何硬骨头任务上不混乱、不跑偏、不重复踩坑**。
 
-本 skill 不假定固定命令、芯片型号、CANN 版本或仓库结构。先发现环境，再选择工具和策略。
-不以“某个 benchmark shape 变快”为完成，以目标语义、目标口径和真实环境证据为完成。
+WHEN 任务同时满足以下三条 THEN 启用本 skill：
+- 有书面验收标准（测试集、性能口径、正确性要求）；
+- 需要超过一天的多轮迭代才能完成；
+- 失败成本高（返工、跑偏、遗忘都会浪费大量时间）。
 
-## 核心契约
+## 三层阅读协议（先读这段）
 
-1. **目标优先于局部指标**：先写清最终目标、验收口径、约束和可以放弃的指标。
-2. **事实优先于记忆**：任何结论必须能回到当前源码、二进制、命令、原始日志或官方来源。
-3. **正确性先于性能**：语义、边界、精度和 fallback 未闭环前，不做激进性能推广。
-4. **归因先于修改**：先定位关键路径和量级，再做最小、单变量、可证伪的实验。
-5. **证据先于宣传**：没有真实目标环境证据，不得写 PASS、GO、已解决或可交付。
-6. **泛化先于特例**：优先做算法不变量、公共 primitive 和资源驱动 route；禁止只按 CSV/benchmark
-   shape 堆白名单。
-7. **可回退先于冒险**：每个候选都要有基线、kill criterion、证据路径和回退点。
-8. **连续失败必须换路径**：同一问题、同一结构连续 3 次无正收益，停止参数扫描，写复盘并重规划。
-9. **状态属于文件，不属于上下文**：每轮结束都留下可恢复的 STATE/TRUTH/HANDOFF 和原始证据。
-10. **少而准确的信息优于文档堆积**：只维护权威事实、决策、失败家族和下一步，不复制聊天记录。
+| 层 | 读什么 | 何时读 |
+|---|---|---|
+| L0+L1 | 本文件（第一性原理 + 决策框架） | 启动时必读，约 5 分钟 |
+| L2 | `references/loop.md` | 进入自主循环前读 |
+| L3 | `references/` 下其他文档 | 撞门禁 / 做评审 / 换人恢复 / 用到时按需加载 |
 
-## 启动
+**弱模型模式**：只读 L0+L1，用 `scripts/` 的清单与脚本推进；
+不读深层 references——规则越可执行，越不怕模型弱。
 
-在对源码做有副作用操作前，按以下顺序完成启动：
+**Profile**：领域专属细节不在内核里。`references/profiles/` 按需加载，
+例如 Ascend/CANN 算子任务加载 `profiles/ascend-cann.md`。
 
-1. 定位 skill 目录、任务工作区、上游仓库、任务书、测试数据和当前运行环境。
-2. 运行 `scripts/discover_environment.py`，记录实际存在的编译器、NPU 工具、设备和版本；
-   不要凭旧记录假设工具存在。需要硬件状态时再显式运行状态探测。
-3. 若尚无任务治理目录，运行：
+## L0 第一性原理（5 条）
 
-   ```bash
-   python scripts/init_mission.py --mission <path> --goal "<goal>" \
-     --operator "<operator>" --repo "<repo>" --task-doc "<path-or-url>" \
-     --acceptance "<acceptance>"
-   ```
+1. **证据优先于记忆**：任何改变决策的结论，必须能回到可复现的证据；
+   状态属于文件，不属于上下文。
+2. **验收口径是唯一的锚**：先写清目标、验收口径、约束和可放弃项；
+   WHEN 口径变化 THEN 所有旧结论重新验证，不偷换口径。
+3. **归因先于修改**：先定位关键路径/失效机制，再做最小、单变量、
+   可证伪的实验。不做"不知道为什么慢就先改改看"的实验。
+4. **泛化先于特例**：优先结构性、跨用例的方案；禁止按测试用例堆特例
+   （白名单蔓延是局部最优陷阱）。
+5. **失败要有价格**：每个候选都有 kill criterion；连续失败必须换路径，
+   不许换参数硬撑。
 
-4. 按 `mission/AGENT.md` 的读取顺序重建事实。不要只读摘要；至少核对当前 commit、工作树状态、
-   源码 hash、实际加载的二进制 hash、目标环境版本和最近一次权威证据。
-5. 用 `mission/PLAN.md` 记录 3-5 个面向真实证据的 checkpoint。每个 checkpoint 必须有：
-   目的、最小实验、通过条件、kill criterion、证据路径。
-6. 用 `mission/METRICS.md` 建立效率基线，至少记录可信基线耗时、候选排除成本、重复探索和
-   handoff 恢复情况。
-7. 运行 `scripts/mission_lint.py <mission>`，修复结构性缺失后再开始长任务。
+## L1 决策框架（触发式，按顺序检查）
 
-## 自主循环
+1. WHEN 正确性/语义未闭环 THEN 不做任何性能推广，先关正确性门。
+2. WHEN 基线不可信（hash 对不上、环境变了、口径变了） THEN 先重建基线，
+   不在未知基线上叠新变量。
+3. WHEN 同一结构连续 3 次无正收益 THEN 停止参数扫描，写失败复盘，
+   只允许从新结构假设重开（见 `references/loop.md` 止损节）。
+4. WHEN 连续 N 轮（建议 5，见 `references/hard-set.md`）整体只有个位数增长 THEN 强制换算法路线，不许再调参。
+5. WHEN 多个候选并行 THEN 每 N 轮（建议 5）强制看一次记分牌，kill 落后者
+   （见 `references/multi-agent.md` 赛马节）。
+6. WHEN 验收口径冲突 / 不可逆高成本操作 / 目标资源缺失 THEN 升级给用户，
+   附一页材料：当前目标、已验证事实、已关闭路线、最小请求、默认建议。
 
-每一轮只执行一个最高价值闭环：
+**默认优先级**（无触发时按此排序）：修失效契约 → 修正确性 →
+建可信基线 → 关键路径归因 → 结构性改动 → 长尾收敛 → 清理交付。
 
-1. **重新锚定**：重新读取任务书/验收口径，检查是否漂移；验证当前权威源码、二进制和环境是否
-   仍与最近的 HANDOFF 一致。不一致时先把旧事实标为 `stale`，不要继续沿用。
-2. **分类问题**：把当前阻碍归入 `契约/语义`、`正确性`、`环境/构建`、`性能关键路径`、
-   `证据/状态` 或 `工程卫生`。不同类别使用不同 gate，禁止混成一个“优化问题”。
-3. **建立/恢复基线**：选择当前最小可复现基线。若结果与权威记录不一致，先解释差异，
-   不要在一个未知基线上叠加新变量。
-4. **做归因**：优先使用当前环境可用的官方观测工具和最小 probe，建立 phase、route、launch、
-   memory、compute、sync、host 或数值误差账本。先回答“为什么慢/错/不稳定”，再回答“怎么改”。
-5. **提出可证伪候选**：写一条假设、一个变量、预期方向、目标量级和 kill criterion。用
-   `scripts/new_candidate.py` 登记。模板和决策树见 `references/autonomous-loop.md`。
-6. **执行最小实验**：先跑最小区分性 case，再做代表性集合，最后才做全量。过程证据不能替代
-   目标环境验收。
-7. **按 gate 裁决**：
-   - 正确性/语义问题：按 `references/correctness-gates.md` 验证。
-   - 性能/泛化问题：按 `references/performance-gates.md` 验证。
-   - 证据/交接问题：按 `references/evidence-and-truth.md` 验证。
-8. **记录并决定**：promote、iterate、revert、park 或 close。失败也要留下“失败原因 + 关闭条件 +
-   重开条件”，避免换 agent 后重复投入。
-9. **写恢复点**：更新 STATE、TRUTH、CANDIDATES、LESSONS、METRICS 和 HANDOFF，清理不必要残留。
+## L2 自主循环（骨架）
 
-循环不需要等待用户逐步指令；只有验收口径冲突、不可逆风险、外部资源缺失或连续失败需要改变
-目标时，才升级给用户。升级前必须提供当前事实、已尝试路径、最小请求和推荐的默认选择。
+每轮只执行一个最高价值闭环，顺序如下（详见 `references/loop.md`）：
 
-## 决策优先级
+```text
+REANCHOR（重锚定：口径/hash/环境/HANDOFF 是否还成立）
+→ CLASSIFY（分类：契约/正确性/环境/性能/证据/卫生，禁止混成"需要优化"）
+→ BASELINE（最小可复现基线；先解释差异再叠变量）
+→ ATTRIBUTE（关键路径/误差账本：时间花在哪、哪段不可压缩）
+→ HYPOTHESIZE（可证伪候选：假设+唯一变量+预期+kill 线，用脚本登记）
+→ PROBE（分层：最小 case → 代表性集 → 全量；成本递增）
+→ GATE（按类别跑门禁：references/gates.md；二元裁决）
+→ DECIDE（promote / iterate / revert / park / close 五选一）
+→ PERSIST（更新状态文件；清理残留）
+→ 赛马复盘点（到 N 轮（建议 5）了吗？看记分牌）
+```
 
-按以下顺序选择下一步，不要凭“看起来最有潜力”跳级：
+## 状态文件（速览）
 
-1. 修复会让所有性能结论失效的契约、语义、构建或 provenance 问题。
-2. 修复 P0 正确性、数据破坏、越界、竞态、精度或 fallback 问题。
-3. 建立可信基线和可复现证据，消除 stale binary、dirty tree、错误设备或错误口径。
-4. 做官方工具驱动的关键路径归因，区分 launch、host、memory、compute、sync、layout 和 variance。
-5. 选择能跨多个用例泛化的结构改动；不要先追单个 shape 的最后一微秒。
-6. 提升 near-gate 和残余长尾，最后再做局部微调。
-7. 清理实验代码、route 白名单和交付树，进行独立评审。
+`init_mission.py` 生成任务目录；权威文件各只有一份。
+详见 `references/state-files.md`。
 
-## 官方工具优先
+| 文件 | 内容 | 写者 |
+|---|---|---|
+| STATE.md | 当前 checkpoint、基线、阻塞、尝试次数 | 当前 owner |
+| TRUTH.md | 带来源/版本/状态的已验证事实 | orchestrator |
+| PLAN.md | 3–5 个 checkpoint（目的/实验/通过条件/kill 线） | orchestrator |
+| CANDIDATES.md | 候选台账：假设/变量/结果/裁决/回退点 | drivers |
+| HARDSET.md | 长期不过的困难用例，独立爆破 | orchestrator |
+| LESSONS.md | 可复用失败模式 | orchestrator/reviewer |
+| REVIEW.md | **独立** reviewer 的 gate 结论，非自评 | reviewer |
+| METRICS.md | 攻坚效率记分牌 | orchestrator |
+| HANDOFF.md | 新 agent 最短恢复路径（命令+预期+stop 条件） | 当前 owner |
 
-先运行环境发现脚本，再读取 `references/official-tools.md`。原则是：
+单 writer 规则：同一时间只允许一个 writer 改权威文件；
+sub-agent 写自己的 worklog/evidence，由 owner 汇总。
 
-- 先用官方 profiling、logging、sanitizer、debugger、compiler diagnostics 和 correctness tools，
-  再用自建 microbenchmark 解释原因。
-- 保留工具原始输出；摘要只能作为派生信息。
-- 任何工具结论都要写清目标、过滤条件、采样方式、版本、设备、命令和原始日志。
-- 工具不可用、版本不兼容或语义不明时，记录限制并选择最低风险的替代证据，不要伪装成等价证据。
-- 官方文档、样例和当前安装头文件优先于历史总结或第三方文章。
+## 关键机制（索引）
 
-## 正确性与性能门禁
+- 分层评测与门禁 → `references/gates.md`
+- 证据层级与 provenance → `references/evidence.md`
+- 通用失败家族 → `references/failure-patterns.md`
+- 多 agent 与赛马纪律 → `references/multi-agent.md`
+- 文件财政纪律（目录契约/搜索配额/远端隔离） → `references/file-hygiene.md`
+- 困难集 → `references/hard-set.md`
+- 好/坏实例 → `references/examples.md`
+- 效率信号与复盘 → `references/efficiency.md`
+- 领域 profile → `references/profiles/ascend-cann.md`
 
-**正确性门禁**必须覆盖：
+## 脚本
 
-- 目标 API/格式的完整语义，而不只是数值主路径。
-- 边界、空值、非法参数、奇异/退化、非有限值、极值、padding、stride、broadcast/别名等适用场景。
-- fast path 与 fallback 的一致性；内部状态不得污染用户可见输出。
-- 随机输入之外的结构化、对抗和分布变化输入。
-- 目标硬件上的真实运行，CPU 模拟和 local mock 只能作为过程证据。
+- `scripts/init_mission.py --mission <dir> --goal ... --acceptance ... [--profile ascend-cann]`：初始化任务目录与模板。
+- `scripts/discover_environment.py [--profile <name>]`：只读环境发现，不假设工具存在。
+- `scripts/new_candidate.py`：登记可证伪候选（假设/单变量/预测/kill 线）。
+- `scripts/mission_lint.py <mission>`：结构 lint——缺文件、占位符、HANDOFF 过期、
+  无 hash、REVIEW pending、scratch 孤儿目录、research 超量。
 
-**性能门禁**必须覆盖：
+## 模型/harness 无关声明
 
-- 任务书/用户定义的目标口径，不偷换 kernel-only、host wall、中位数或单次最优值。
-- 输入重置、warmup、有效采样、设备空闲、机器负载和统计方法。
-- 同机器、同构建、同输入下的 A/B；每次只改变一个主变量。
-- 最小 case、代表性 case、全量回归和至少一次独立复现。
-- 提升必须说明作用区间和泛化边界；新 route 不能造成已通过区间静默回归。
-- 近门限结果要区分真实提升、跨 run variance 和顺序/热状态效应。
-
-详细规则见 `references/correctness-gates.md` 和 `references/performance-gates.md`。
-
-## 长上下文、compact 与换 agent
-
-不要把聊天摘要当作状态。每次暂停、compact 前或移交前，必须维护：
-
-- `STATE.md`：当前 checkpoint、权威基线、阻塞、尝试次数、残留进程/文件。
-- `TRUTH.md`：带来源、版本和核对时间的当前事实，明确 `verified/assumed/stale/contradicted`。
-- `HANDOFF.md`：最短恢复路径、权威 hash、下一条可执行命令、必须避开的失败家族。
-- `CANDIDATES.md`：候选、预测、结果、裁决、回退点和重开条件。
-- `REVIEW.md`：独立 Reviewer 的 gate 结论，不写实现者自我评价。
-- `METRICS.md`：攻坚效率、重复探索、证据返工和恢复成本的趋势。
-
-新 agent 的第一条纪律是“验证而不是相信”：复算 hash、检查工作树与设备、重跑一个最小 smoke，
-再决定是否继续旧路线。完整恢复协议见 `references/context-continuity.md`。
-
-## 多 agent 模式
-
-多 agent 只用于真正独立的专业工作，不用于增加“看起来在并行”的噪声。
-
-- **Orchestrator**：维护目标、检查点、路由冲突、证据准入和最终裁决；不替 Driver 写实现。
-- **Driver**：独占一个 worktree 和一个检查点，产出实现、原始证据和回退点。
-- **Specialist**：做方案、算法、硬件、API 或测量方法研究，输出选择与风险，不改生产代码。
-- **Reviewer**：从交付物、出口标准和原始证据独立验收，不读实现者结论。
-- **Guard**：审查不可逆操作、共享设备冲突、数据/凭据泄露和测量污染，不代执行。
-- **Integrator**：只从已评审的候选和证据合并，负责最终 diff、兼容性和交付清理。
-
-隔离、租约、消息和合并协议见 `references/multi-agent.md`。
-
-## 信息纪律
-
-每轮信息分成四类：
-
-1. **权威事实**：进入 TRUTH，必须有来源和核对时间。
-2. **决策记录**：进入 STATE/PLAN/REVIEW，说明为什么继续、回退或关闭。
-3. **过程证据**：进入 evidence/worklog，保留命令、原始输出和 hash。
-4. **噪声**：推测、重复摘要、无来源数字、已被取代的中间结论，不进入权威状态。
-
-只记录会改变下一步动作的信息。优先保留：
-
-- 当前关键路径和量级；
-- 失败结构家族与已经排除的路线；
-- 能跨 shape/版本/任务复用的 invariant 和 primitive；
-- 会让旧结论失效的版本、hash、分布或口径变化。
-
-文档模型和去噪规则见 `references/information-hygiene.md`。
-
-## 长程目标推进
-
-当直接达成目标困难时，不要降低目标；把目标拆成“结果 + 证据 + 资源”的连续关卡：
-
-- 先锁定不可变正确性契约和目标测量口径；
-- 再建立真实基线；
-- 再建立关键路径预算；
-- 再消除结构瓶颈；
-- 再提高泛化与稳定性；
-- 最后做交付与独立复审。
-
-允许路线变化，不允许验收口径静默变化。若目标本身变化，更新 TRUTH/PLAN 并明确说明哪些旧证据
-失效。
-
-## 结束条件
-
-只有同时满足以下条件才可宣布完成：
-
-1. 目标语义和所有适用边界在真实目标环境通过。
-2. 性能/资源目标按官方口径通过，并有原始证据和独立复现。
-3. 结果绑定到干净或完整可重建的源码/二进制状态。
-4. 全量回归没有未解释的 P0/P1 回归。
-5. Reviewer 从证据独立给出通过结论。
-6. 实验代码、临时状态、未证 route 和敏感信息已从交付物清理。
-7. HANDOFF 和复现命令足以让新 agent 从零重建结果。
-
-若未满足，输出的是当前最佳状态、剩余风险、下一条最短路径和明确 blocker，不写“基本完成”。
-
-## 参考文件路由
-
-- 自主循环、决策树和止损：`references/autonomous-loop.md`
-- 事实、证据等级和 provenance：`references/evidence-and-truth.md`
-- 官方工具发现与使用：`references/official-tools.md`
-- 性能归因和调优：`references/performance-gates.md`
-- 正确性与数值门禁：`references/correctness-gates.md`
-- 多 agent 隔离与协作：`references/multi-agent.md`
-- compact/换 agent 恢复：`references/context-continuity.md`
-- 文档与信息去噪：`references/information-hygiene.md`
-- 上游交付与 PR 纪律：`references/upstream-delivery.md`
-- 历史失败家族与反模式：`references/failure-patterns.md`
-- 攻坚效率和切入点评估：`references/optimization-efficiency.md`
-- 通用优化家族与执行顺序：`references/optimization-playbook.md`
+本 skill 是声明式的（验收什么、达到什么标准），不是命令式的
+（点哪个按钮、调哪个 API）。换模型、换 harness（Claude Code / Codex /
+DeepSeek Harness / 其他）不影响内核；`scripts/` 只做薄薄的脚手架调用。

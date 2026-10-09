@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Read-only discovery of Ascend/CANN tools, compilers, devices, and versions."""
+"""Read-only discovery of compilers, tooling, devices, and versions.
+
+v2: tool list is profile-driven. Base list is generic; a domain profile
+(references/profiles/<name>.tools.json) may add extra tools and env keys.
+"""
 
 from __future__ import annotations
 
 import argparse
-import glob
 import json
 import os
 import platform
@@ -13,7 +16,7 @@ import subprocess
 from pathlib import Path
 
 
-TOOLS = [
+BASE_TOOLS = [
     ("git", ["--version"]),
     ("cmake", ["--version"]),
     ("ninja", ["--version"]),
@@ -21,106 +24,64 @@ TOOLS = [
     ("g++", ["--version"]),
     ("clang++", ["--version"]),
     ("python3", ["--version"]),
-    ("python", ["--version"]),
-    ("bisheng", ["--version"]),
-    ("ascendc", ["--version"]),
-    ("ccec", ["--version"]),
-    ("npu-smi", ["--version"]),
-    ("msprof", ["--version"]),
-    ("mssanitizer", ["--version"]),
-    ("msdebug", ["--version"]),
-    ("msopgen", ["--version"]),
+    ("nvidia-smi", ["--version"]),
+    ("rocminfo", ["--version"]),
 ]
-ENV_KEYS = [
-    "ASCEND_HOME_PATH",
-    "ASCEND_TOOLKIT_HOME",
-    "ASCEND_OPP_PATH",
-    "ASCEND_CANN_PACKAGE_PATH",
-    "ASCEND_AICPU_PATH",
-    "PATH",
-]
+BASE_ENV_KEYS = ["PATH", "HOME"]
 
 
 def command_output(command: list[str], timeout: int) -> dict[str, object]:
     try:
         result = subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
+            command, check=False, capture_output=True, text=True, timeout=timeout
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return {"ok": False, "error": str(exc)}
-    text = (result.stdout or result.stderr or "").strip()
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
+        return {"found": False, "error": str(exc)}
+    out = (result.stdout or result.stderr or "").strip().splitlines()
     return {
-        "ok": result.returncode == 0,
-        "returncode": result.returncode,
-        "output": lines[:5],
+        "found": result.returncode == 0,
+        "version": out[0] if out else "",
+        "path": shutil.which(command[0]),
     }
-
-
-def discover(timeout: int, probe: bool) -> dict[str, object]:
-    tools: dict[str, object] = {}
-    for name, version_args in TOOLS:
-        path = shutil.which(name)
-        tools[name] = {"path": path}
-        if path:
-            tools[name]["version"] = command_output([path, *version_args], timeout)
-
-    env = {key: os.environ.get(key, "") for key in ENV_KEYS}
-    devices = sorted(glob.glob("/dev/davinci*") + glob.glob("/dev/hisi_hdc"))
-    result: dict[str, object] = {
-        "platform": {
-            "system": platform.system(),
-            "release": platform.release(),
-            "machine": platform.machine(),
-            "python": platform.python_version(),
-        },
-        "cwd": str(Path.cwd()),
-        "environment": env,
-        "devices": devices,
-        "tools": tools,
-    }
-
-    if probe and shutil.which("npu-smi"):
-        result["probe"] = {
-            "npu-smi info": command_output([shutil.which("npu-smi") or "npu-smi", "info"], timeout),
-        }
-    return result
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--timeout", type=int, default=8)
-    parser.add_argument("--probe", action="store_true", help="Run read-only device status commands")
-    parser.add_argument("--json", action="store_true", help="Emit JSON")
-    parser.add_argument("--output", help="Write the report to a file")
+    parser.add_argument(
+        "--profile",
+        default="",
+        help="Domain profile name; loads references/profiles/<name>.tools.json if present",
+    )
+    parser.add_argument("--timeout", type=int, default=10)
+    parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
     args = parser.parse_args()
 
-    report = discover(max(1, args.timeout), args.probe)
-    text = json.dumps(report, indent=2, ensure_ascii=False) + "\n"
-    if args.output:
-        Path(args.output).expanduser().write_text(text, encoding="utf-8", newline="\n")
-    if args.json or args.output:
-        print(text, end="")
+    tools = list(BASE_TOOLS)
+    env_keys = list(BASE_ENV_KEYS)
+    if args.profile:
+        skill_root = Path(__file__).resolve().parent.parent
+        profile_tools = skill_root / "references" / "profiles" / f"{args.profile}.tools.json"
+        if profile_tools.is_file():
+            data = json.loads(profile_tools.read_text(encoding="utf-8"))
+            tools.extend((t["bin"], t.get("args", ["--version"])) for t in data.get("tools", []))
+            env_keys.extend(data.get("env_keys", []))
+        else:
+            print(f"note: no tools file for profile '{args.profile}'; using base list")
+
+    report: dict[str, object] = {
+        "platform": platform.platform(),
+        "tools": {name: command_output([name, *cargs], args.timeout) for name, cargs in tools},
+        "env": {key: os.environ.get(key, "") for key in env_keys},
+    }
+    if args.json:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
     else:
-        print(f"Platform: {report['platform']}")
-        print(f"Devices: {', '.join(report['devices']) or 'none found'}")
-        print("Tools:")
-        for name, info in report["tools"].items():
-            path = info.get("path") or "-"
-            version = info.get("version") or {}
-            first = version.get("output", [""])[0] if isinstance(version, dict) else ""
-            print(f"  {name:14} path={path} version={first}")
-        if "probe" in report:
-            print("Probe:")
-            for name, output in report["probe"].items():
-                print(f"  {name}: {output}")
+        print(f"platform: {report['platform']}")
+        for name, info in report["tools"].items():  # type: ignore[union-attr]
+            status = "OK " if info["found"] else "MISS"
+            print(f"[{status}] {name}: {info.get('version') or info.get('path') or '-'}")
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

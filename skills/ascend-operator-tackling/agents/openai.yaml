@@ -1,4 +1,4 @@
 interface:
-  display_name: "Ascend Operator Tackling"
-  short_description: "Goal-driven Ascend operator development and tuning"
-  default_prompt: "Use $ascend-operator-tackling to drive a long-horizon Ascend operator mission with evidence-first checkpoints, official tooling, and autonomous correction."
+  display_name: "Long-horizon Tackling"
+  short_description: "Goal-driven, evidence-first workflow for long-horizon engineering sieges"
+  default_prompt: "Use $ascend-operator-tackling to drive a long-horizon engineering mission with evidence-first checkpoints, layered evaluation, falsifiable candidates, kill criteria, and autonomous correction. Load a domain profile from references/profiles/ when needed (e.g. ascend-cann)."

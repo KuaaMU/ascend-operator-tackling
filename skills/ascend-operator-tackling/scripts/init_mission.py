@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Initialize a long-horizon operator mission from reusable templates."""
+"""Initialize a long-horizon tackling mission from reusable templates.
+
+v2: domain profile support (--profile), file-hygiene directories
+(scratch/, research/, hard-set/).
+"""
 
 from __future__ import annotations
 
@@ -20,9 +24,14 @@ def main() -> int:
     parser.add_argument("--mission", required=True, help="Mission directory to initialize")
     parser.add_argument("--goal", required=True, help="Final objective")
     parser.add_argument("--acceptance", required=True, help="Acceptance criteria summary")
-    parser.add_argument("--operator", default="unknown", help="Operator or workload name")
+    parser.add_argument("--operator", default="unknown", help="Workload name")
     parser.add_argument("--repo", default="unknown", help="Repository or workspace")
     parser.add_argument("--task-doc", default="unknown", help="Task document path or URL")
+    parser.add_argument(
+        "--profile",
+        default="",
+        help="Domain profile to load, e.g. ascend-cann (references/profiles/<name>.md)",
+    )
     parser.add_argument("--force", action="store_true", help="Overwrite known template files")
     args = parser.parse_args()
 
@@ -31,11 +40,21 @@ def main() -> int:
     if not template_dir.is_dir():
         parser.error(f"mission templates not found: {template_dir}")
 
+    if args.profile:
+        profile_path = skill_root / "references" / "profiles" / f"{args.profile}.md"
+        if not profile_path.is_file():
+            parser.error(f"profile not found: {profile_path}")
+
     mission = Path(args.mission).expanduser().resolve()
     mission.mkdir(parents=True, exist_ok=True)
-    existing = [path for path in mission.iterdir() if path.name not in {"evidence", "worklog", "reports", "archive"}]
+    keep = {"evidence", "worklog", "reports", "archive", "scratch", "research", "hard-set"}
+    existing = [p for p in mission.iterdir() if p.name not in keep]
     if existing and not args.force:
         parser.error(f"mission directory is not empty: {mission}; use --force to overwrite templates")
+
+    # File-hygiene directories (references/file-hygiene.md).
+    for directory in ("evidence", "worklog", "reports", "archive", "scratch", "research", "hard-set"):
+        (mission / directory).mkdir(parents=True, exist_ok=True)
 
     values = {
         "GOAL": args.goal,
@@ -43,11 +62,9 @@ def main() -> int:
         "OPERATOR": args.operator,
         "REPO": args.repo,
         "TASK_DOC": args.task_doc,
+        "PROFILE": args.profile or "none (generic kernel)",
         "DATE": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
-    for directory in ("evidence", "worklog", "reports", "archive"):
-        (mission / directory).mkdir(parents=True, exist_ok=True)
-
     for source in sorted(template_dir.glob("*.md")):
         text = fill(source.read_text(encoding="utf-8"), values)
         destination = mission / source.name
@@ -56,10 +73,11 @@ def main() -> int:
         destination.write_text(text, encoding="utf-8", newline="\n")
 
     print(f"Initialized mission: {mission}")
+    if args.profile:
+        print(f"Profile loaded: references/profiles/{args.profile}.md")
     print("Next: read AGENT.md, verify the live environment, then fill PLAN/TRUTH/HANDOFF.")
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
